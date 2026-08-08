@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MCQ marker</title>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+  :root{
+    --accent:#4f46e5; --accent-soft:#eef2ff;
+    --ok:#16a34a; --ok-soft:#dcfce7;
+    --bad:#dc2626; --bad-soft:#fee2e2;
+    --warn:#d97706; --warn-soft:#fef3c7;
+    --ink:#1f2937; --muted:#6b7280; --line:#e5e7eb; --bg:#f4f5f7;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);line-height:1.45}
+  header{background:#fff;border-bottom:1px solid var(--line);padding:18px 28px}
+  header h1{margin:0;font-size:22px}
+  header p{margin:4px 0 0;color:var(--muted);font-size:14px}
+  main{max-width:1100px;margin:0 auto;padding:20px 20px 80px}
+  section.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:20px 24px;margin-top:18px}
+  h2{font-size:16px;margin:0 0 12px;display:flex;align-items:center;gap:10px}
+  h2 .step{background:var(--accent);color:#fff;border-radius:999px;width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;font-size:13px;flex:none}
+  label{font-size:13px;color:var(--muted)}
+  input[type=text],input[type=number],select{font:inherit;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink)}
+  input[type=number]{width:80px}
+  button{font:inherit;border:none;border-radius:8px;padding:8px 16px;cursor:pointer;background:var(--accent);color:#fff}
+  button.secondary{background:#fff;color:var(--ink);border:1px solid var(--line)}
+  button:disabled{opacity:.45;cursor:default}
+  .row{display:flex;gap:14px;flex-wrap:wrap;align-items:end}
+  .field{display:flex;flex-direction:column;gap:4px}
+  .hint{font-size:12.5px;color:var(--muted);margin-top:10px}
+  /* answer key grid */
+  #keyGrid{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
+  .kq{display:flex;align-items:center;gap:3px;border:1px solid var(--line);border-radius:8px;padding:3px 6px;background:#fafafa}
+  .kq .qn{font-size:11px;color:var(--muted);width:20px;text-align:right}
+  .kq button{padding:2px 0;width:24px;font-size:12px;background:#fff;color:var(--ink);border:1px solid var(--line);border-radius:6px}
+  .kq button.sel{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .kq.ghost{opacity:.4;border-style:dashed;background:transparent}
+  .kq.ghost:hover{opacity:.85}
+  /* dropzone */
+  #drop{border:2px dashed #c7cbd4;border-radius:12px;padding:34px;text-align:center;color:var(--muted);cursor:pointer;transition:.15s}
+  #drop.over{border-color:var(--accent);background:var(--accent-soft)}
+  /* sheet cards */
+  .sheet{border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-top:14px}
+  .sheet .top{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+  .sheet img.namecrop{max-height:44px;max-width:min(380px,100%);height:auto;border:1px solid var(--line);border-radius:6px;background:#fff}
+  .sheet input.sname{font-weight:600;min-width:200px}
+  .badge{border-radius:999px;padding:3px 12px;font-size:13px;font-weight:600}
+  .badge.score{background:var(--accent-soft);color:var(--accent)}
+  .badge.err{background:var(--bad-soft);color:var(--bad)}
+  .flagsline{font-size:12.5px;color:var(--warn);margin-top:8px}
+  .chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px}
+  .chip{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);border-radius:7px;padding:2px 7px;font-size:12.5px;cursor:pointer;background:#fff;user-select:none}
+  .chip .qn{color:var(--muted);font-size:11px}
+  .chip b{font-size:13px;width:12px;text-align:center}
+  .chip.ok{background:var(--ok-soft);border-color:#bbe7c9}
+  .chip.wrong{background:var(--bad-soft);border-color:#f3c2c2}
+  .chip.flagged{background:var(--warn-soft);border-color:#ecd9a0}
+  .sheet .actions{margin-left:auto;display:flex;gap:8px}
+  .sheet .actions button{padding:6px 12px;font-size:13px}
+  /* results table */
+  table{border-collapse:collapse;width:100%;font-size:14px}
+  th,td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  /* corner modal */
+  #modal{position:fixed;inset:0;background:rgba(15,18,30,.65);display:none;align-items:center;justify-content:center;z-index:50}
+  #modal.open{display:flex}
+  #modal .box{background:#fff;border-radius:14px;padding:18px;max-width:92vw;max-height:92vh;display:flex;flex-direction:column;gap:12px}
+  #modal canvas{max-width:86vw;max-height:74vh;border-radius:8px;cursor:crosshair}
+  #modal .mbtns{display:flex;gap:10px;justify-content:flex-end}
+  .empty{color:var(--muted);font-size:14px;padding:8px 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>MCQ marker</h1>
+  <p>Print bubble sheets → students fill them in → upload photos or scans → review → download Excel results.</p>
+</header>
+<main>
+  <section class="card">
+    <h2><span class="step">1</span>Answer key <span style="font-weight:400;color:var(--muted);font-size:13px">— <span id="hdrCount">0</span> questions, A–D</span></h2>
+    <div class="row">
+      <div class="field" style="flex:1;min-width:260px"><label>Type your answers in order (e.g. ABCDA BCDAB …) or click them below — the number of questions follows what you enter</label>
+        <input type="text" id="keyText" placeholder="ABCDA BCDAB ..."></div>
+    </div>
+    <div id="keyGrid"></div>
+    <div class="hint" id="keyStatus"></div>
+    <div class="hint" id="keyWarn" style="color:#b4530a"></div>
+  </section>
+  <section class="card">
+    <h2><span class="step">2</span>Print answer sheets</h2>
+    <button id="printBtn">Print / save sheet as PDF</button>
+    <div class="hint">One slip holds 40 questions. Shorter tests use the same slip — only the first <span id="prtGraded">40</span> rows are graded, so a single printed batch covers any test up to 40 questions.</div>
+  </section>
+  <section class="card">
+    <h2><span class="step">3</span>Upload filled sheets</h2>
+    <div id="drop">Drop photos, scans, or a multi-page PDF here, or click to choose files.<br>
+      <span style="font-size:12.5px">JPG / PNG (one per student) or a single PDF with <b>one student per page</b> — the whole class is graded at once.<br>
+      Tip: lay each sheet flat, good light, all four corner squares in frame, roughly straight-on.</span></div>
+    <input type="file" id="fileInput" accept="image/*,application/pdf,.pdf" multiple style="display:none">
+    <div class="row" style="margin-top:14px">
+      <div class="field"><label>Mark sensitivity — raise it if faint pencil is read as blank</label>
+        <select id="sens">
+          <option value="0.65">High — very faint pencil</option>
+          <option value="1" selected>Normal</option>
+          <option value="1.4">Low — dark pen only</option>
+        </select></div>
+      <div class="hint" style="margin:0 0 6px">Changing this re-grades every sheet and clears manual corrections.</div>
+    </div>
+    <div id="uploadStatus" class="hint" style="display:none"></div>
+    <div id="sheets"></div>
+  </section>
+  <section class="card">
+    <h2><span class="step">4</span>Results</h2>
+    <div id="results"><p class="empty">No sheets graded yet.</p></div>
+    <div style="margin-top:14px"><button id="exportBtn" disabled>Download Excel (.xlsx)</button></div>
+  </section>
+</main>
+<div id="modal">
+  <div class="box">
+    <div style="font-weight:600">Drag the four handles onto the centres of the corner squares (TL, TR, BR, BL = the smaller one)</div>
+    <canvas id="modalCanvas"></canvas>
+    <div class="mbtns">
+      <button class="secondary" id="modalCancel">Cancel</button>
+      <button id="modalApply">Apply &amp; re-grade</button>
+    </div>
+  </div>
+</div>
+<script>
+'use strict';
+/* ================= geometry (mm, shared by printer & grader) =================
+   Bubbles only — no title, no name box, no instructions. One sheet = 40
+   questions in an 8 across × 5 down grid, and the paper is exactly as big as
+   that grid needs, with the four alignment squares packed tight around it. */
+const QPR=8, ROWS_PER_BLOCK=5, Q_PER_BLOCK=QPR*ROWS_PER_BLOCK;
+const ROW_PITCH=6.5, BLOCK_GAP=4;
+const COL_W=20, LABEL_W=5, BUB_PITCH=3.9, BUB_R=1.55;
+const MARK_S=9, MARK_S_SMALL=6.5;   // BL is the small one -> tells us orientation
+const PAGE_PAD=3, QUIET=3.5;        // paper edge -> square, and square -> bubbles
+const ORIGIN=PAGE_PAD+MARK_S+QUIET; // top-left of the answer area
+const LETTERS=['A','B','C','D'];
+function gridShape(n){
+  const blocks=Math.max(1,Math.ceil(n/Q_PER_BLOCK));
+  const last=n-(blocks-1)*Q_PER_BLOCK;
+  return {blocks, rows:(blocks-1)*ROWS_PER_BLOCK+Math.max(1,Math.ceil(last/QPR))};
+}
+function pageSize(n){
+  const {blocks,rows}=gridShape(n);
+  const cols=Math.max(1,Math.min(QPR,n));
+  return {w:(cols-1)*COL_W+LABEL_W+3*BUB_PITCH+BUB_R+2*ORIGIN,
+          h:(rows-1)*ROW_PITCH+(blocks-1)*BLOCK_GAP+2*BUB_R+2*ORIGIN};
+}
+function markers(n){                // [TL,TR,BR,BL]
+  const p=pageSize(n), o=PAGE_PAD+MARK_S/2;
+  return [{cx:o,cy:o,s:MARK_S},{cx:p.w-o,cy:o,s:MARK_S},
+          {cx:p.w-o,cy:p.h-o,s:MARK_S},{cx:o,cy:p.h-o,s:MARK_S_SMALL}];
+}
+function bubbleCenter(q,opt){       // 0-based question & option -> mm centre
+  const block=Math.floor(q/Q_PER_BLOCK), rem=q-block*Q_PER_BLOCK;
+  const row=Math.floor(rem/QPR), col=rem%QPR;
+  return [ORIGIN+col*COL_W+LABEL_W+opt*BUB_PITCH,
+          ORIGIN+BUB_R+(block*ROWS_PER_BLOCK+row)*ROW_PITCH+block*BLOCK_GAP];
+}
+/* ================= app state ================ */
+const MAX_Q=200, GHOSTS=8;   // spare click-slots shown after the last question
+const state={ numQ:0, key:[], sheets:[], nextId:1, sens:1 };
+const $=s=>document.querySelector(s);
+/* How many question rows the PAPER has, which is not the same as how many
+   questions the test has. The slip is always whole 40-question blocks, so one
+   printed batch serves a 16-question quiz and a 40-question exam alike — the
+   key length only decides how many of those rows get graded. Tying the paper
+   size to the key length instead would mean a 16-question key expects a
+   2-row slip, and reading a standard 5-row sheet with it lands the bubble
+   grid on the wrong rows entirely. */
+function sheetQ(){ return Q_PER_BLOCK*Math.max(1,Math.ceil(state.numQ/Q_PER_BLOCK)); }
+/* ================= step 1: answer key =================
+   The question count is not chosen anywhere — it IS the length of the key.
+   Type 20 letters and it's a 20-question test; the sheet and scoring follow. */
+function setKey(arr){
+  const n=Math.max(0,Math.min(MAX_Q,arr.length));
+  const changed=(n!==state.numQ);
+  if(changed && state.sheets.length){
+    // sheet geometry depends on the count, so old scans no longer line up
+    state.sheets=[];
+    $('#keyWarn').textContent='Uploaded sheets were cleared — the question count changed, so the printed sheet is a different size.';
+  }
+  state.key=arr.slice(0,MAX_Q);
+  state.numQ=n;
+  renderKeyGrid(); renderSheets(); renderResults();
+}
+function renderKeyGrid(){
+  const g=$('#keyGrid'); g.innerHTML='';
+  const shown=Math.min(MAX_Q,state.numQ+GHOSTS);
+  for(let q=0;q<shown;q++){
+    const ghost=q>=state.numQ;
+    const d=document.createElement('div'); d.className='kq'+(ghost?' ghost':'');
+    if(ghost) d.title='Click a letter to extend the key to this question';
+    d.innerHTML=`<span class="qn">${q+1}</span>`;
+    LETTERS.forEach((L,oi)=>{
+      const b=document.createElement('button'); b.textContent=L;
+      if(!ghost && state.key[q]===oi) b.classList.add('sel');
+      b.onclick=()=>{
+        const next=state.key.slice();
+        if(ghost){ for(let i=next.length;i<=q;i++) next[i]=null; next[q]=oi; }
+        else if(next[q]===oi){
+          next[q]=null;
+          while(next.length && next[next.length-1]==null) next.pop();  // trailing blanks shrink the test
+        } else next[q]=oi;
+        setKey(next); syncKeyText();
+      };
+      d.appendChild(b);
+    });
+    g.appendChild(d);
+  }
+  keyStatus();
+}
+function syncKeyText(){
+  $('#keyText').value=state.key.map(k=>k==null?'-':LETTERS[k]).join('').replace(/(.{5})/g,'$1 ').trim();
+}
+function keyStatus(){
+  const set=state.key.filter(k=>k!=null).length;
+  $('#keyStatus').textContent = state.numQ===0
+    ? 'Enter your answer key to begin — the number of questions is set by how many answers you enter.'
+    : set===state.numQ
+      ? `✓ Answer key complete — ${state.numQ}-question test.`
+      : `Answer key: ${set}/${state.numQ} questions set.`;
+  $('#hdrCount').textContent=state.numQ;
+  $('#prtGraded').textContent=state.numQ||40;
+}
+$('#keyText').addEventListener('input',e=>{
+  const chars=e.target.value.toUpperCase().replace(/[^ABCD\-]/g,'').slice(0,MAX_Q);
+  setKey([...chars].map(c=>{ const i=LETTERS.indexOf(c); return i<0?null:i; }));
+});
+/* ================= step 2: printable sheet ================ */
+function sheetHTML(){
+  const n=sheetQ(), p=pageSize(n);
+  let items='';
+  for(const m of markers(n))
+    items+=`<div style="position:absolute;left:${m.cx-m.s/2}mm;top:${m.cy-m.s/2}mm;width:${m.s}mm;height:${m.s}mm;background:#000"></div>`;
+  for(let q=0;q<n;q++){
+    const [x0,y]=bubbleCenter(q,0);
+    items+=`<div style="position:absolute;left:${x0-LABEL_W}mm;top:${y-1.2}mm;width:${LABEL_W-BUB_R-0.4}mm;text-align:right;font-size:2.2mm;line-height:2.4mm;font-weight:700;color:#000">${q+1}</div>`;
+    for(let o=0;o<4;o++){
+      const [cx,cy]=bubbleCenter(q,o);
+      items+=`<div style="position:absolute;left:${cx-BUB_R}mm;top:${cy-BUB_R}mm;width:${BUB_R*2}mm;height:${BUB_R*2}mm;border:0.35mm solid #000;border-radius:50%;font-size:1.7mm;line-height:${BUB_R*2-0.7}mm;text-align:center;font-weight:700;color:#000">${LETTERS[o]}</div>`;
+    }
+  }
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Answer sheet</title>
+    <style>@page{size:${p.w.toFixed(1)}mm ${p.h.toFixed(1)}mm;margin:0}html,body{margin:0;padding:0}
+    body{font-family:Helvetica,Arial,sans-serif;background:#fff;color:#000}</style></head>
+    <body><div style="position:relative;width:${p.w.toFixed(1)}mm;height:${p.h.toFixed(1)}mm">${items}</div></body></html>`;
+}
+$('#printBtn').onclick=()=>{
+  const w=window.open('','_blank');
+  w.document.write(sheetHTML()); w.document.close();
+  w.onload=()=>setTimeout(()=>w.print(),300);
+};
+/* ================= image utils ================ */
+function toGray(canvas){
+  const w=canvas.width,h=canvas.height;
+  const d=canvas.getContext('2d',{willReadFrequently:true}).getImageData(0,0,w,h).data;
+  const g=new Uint8ClampedArray(w*h);
+  for(let i=0,p=0;i<g.length;i++,p+=4) g[i]=(d[p]*0.299+d[p+1]*0.587+d[p+2]*0.114)|0;
+  return {g,w,h};
+}
+function otsu(g){
+  const hist=new Float64Array(256);
+  for(let i=0;i<g.length;i++) hist[g[i]]++;
+  const total=g.length;
+  let sum=0; for(let i=0;i<256;i++) sum+=i*hist[i];
+  let sumB=0,wB=0,best=0,thr=127;
+  for(let t=0;t<256;t++){
+    wB+=hist[t]; if(!wB) continue;
+    const wF=total-wB; if(!wF) break;
+    sumB+=t*hist[t];
+    const mB=sumB/wB, mF=(sum-sumB)/wF, between=wB*wF*(mB-mF)*(mB-mF);
+    if(between>best){best=between;thr=t;}
+  }
+  return thr;
+}
+/* connected components over dark mask -> blobs */
+function findBlobs(g,w,h,thr){
+  const lab=new Int32Array(w*h); const blobs=[]; const stack=new Int32Array(w*h);
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+    const i=y*w+x;
+    if(g[i]>=thr||lab[i]) continue;
+    let sp=0; stack[sp++]=i; lab[i]=blobs.length+1;
+    let area=0,sx=0,sy=0,minx=x,maxx=x,miny=y,maxy=y;
+    while(sp){
+      const j=stack[--sp], jy=(j/w)|0, jx=j-jy*w;
+      area++; sx+=jx; sy+=jy;
+      if(jx<minx)minx=jx; if(jx>maxx)maxx=jx; if(jy<miny)miny=jy; if(jy>maxy)maxy=jy;
+      if(jx>0   &&!lab[j-1]&&g[j-1]<thr){lab[j-1]=lab[i];stack[sp++]=j-1;}
+      if(jx<w-1 &&!lab[j+1]&&g[j+1]<thr){lab[j+1]=lab[i];stack[sp++]=j+1;}
+      if(jy>0   &&!lab[j-w]&&g[j-w]<thr){lab[j-w]=lab[i];stack[sp++]=j-w;}
+      if(jy<h-1 &&!lab[j+w]&&g[j+w]<thr){lab[j+w]=lab[i];stack[sp++]=j+w;}
+    }
+    blobs.push({area,cx:sx/area,cy:sy/area,bw:maxx-minx+1,bh:maxy-miny+1});
+  }
+  return blobs;
+}
+/* detect the 4 fiducials; returns [TL,TR,BR,BL] image points or null */
+function detectMarkers(g,w,h){
+  const thr=otsu(g)*0.85, imgA=w*h;
+  const cands=findBlobs(g,w,h,thr).filter(b=>{
+    const fill=b.area/(b.bw*b.bh), ar=b.bw/b.bh;
+    return b.area>imgA*0.00008 && b.area<imgA*0.04 && fill>0.55 && ar>0.4 && ar<2.5;
+  });
+  if(cands.length<4) return null;
+  const corners=[[0,0],[w,0],[w,h],[0,h]];
+  // Bubbles sit close to the squares on this compact sheet, so per image
+  // quadrant first drop anything much smaller than the biggest blob there
+  // (a filled bubble is far smaller than a square), then take the one nearest
+  // that corner. Scale-free, so framing doesn't matter.
+  const cx0=w/2, cy0=h/2;
+  let byCorner=corners.map(c=>{
+    const q=cands.filter(b=>(b.cx<cx0)===(c[0]===0)&&(b.cy<cy0)===(c[1]===0));
+    if(!q.length) return null;
+    const maxA=Math.max(...q.map(b=>b.area));
+    let best=null,bd=Infinity;
+    for(const b of q){
+      if(b.area<0.4*maxA) continue;
+      const d=(b.cx-c[0])**2+(b.cy-c[1])**2;
+      if(d<bd){bd=d;best=b;}
+    }
+    return best;
+  });
+  if(!byCorner.every(x=>x)||new Set(byCorner).size!==4){
+    // fallback: greedy unique assignment of the blob nearest each image corner
+    const pairs=[];
+    cands.forEach((b,bi)=>corners.forEach((c,ci)=>
+      pairs.push({bi,ci,d:(b.cx-c[0])**2+(b.cy-c[1])**2})));
+    pairs.sort((a,b)=>a.d-b.d);
+    byCorner=Array(4).fill(null);
+    const used=new Set();
+    for(const p of pairs){
+      if(byCorner[p.ci]!=null||used.has(p.bi)) continue;
+      byCorner[p.ci]=cands[p.bi]; used.add(p.bi);
+      if(byCorner.every(x=>x)) break;
+    }
+  }
+  if(!byCorner.every(x=>x)) return null;
+  // sanity: quad covers a decent share of the image
+  const q=byCorner;
+  let area2=0;
+  for(let i=0;i<4;i++){const a=q[i],b=q[(i+1)%4]; area2+=a.cx*b.cy-b.cx*a.cy;}
+  if(Math.abs(area2)/2 < imgA*0.05) return null;
+  // orientation: sort clockwise, the smallest blob is physically BL
+  const mx=q.reduce((s,b)=>s+b.cx,0)/4, my=q.reduce((s,b)=>s+b.cy,0)/4;
+  const cw=[...q].sort((a,b)=>Math.atan2(a.cy-my,a.cx-mx)-Math.atan2(b.cy-my,b.cx-mx));
+  let si=0; for(let i=1;i<4;i++) if(cw[i].area<cw[si].area) si=i;
+  const others=cw.filter((_,i)=>i!==si).map(b=>b.area);
+  if(cw[si].area > 0.75*Math.min(...others)){
+    // size difference inconclusive -> assume photo is upright
+    return byCorner.map(b=>[b.cx,b.cy]);
+  }
+  const TL=cw[(si+1)%4], TR=cw[(si+2)%4], BR=cw[(si+3)%4], BL=cw[si];
+  return [[TL.cx,TL.cy],[TR.cx,TR.cy],[BR.cx,BR.cy],[BL.cx,BL.cy]];
+}
+/* homography mm-space -> image, from 4 correspondences */
+function homography(src,dst){
+  const A=[],bv=[];
+  for(let i=0;i<4;i++){
+    const [x,y]=src[i],[u,v]=dst[i];
+    A.push([x,y,1,0,0,0,-u*x,-u*y]); bv.push(u);
+    A.push([0,0,0,x,y,1,-v*x,-v*y]); bv.push(v);
+  }
+  // gaussian elimination with partial pivoting
+  const n=8, M=A.map((r,i)=>[...r,bv[i]]);
+  for(let c=0;c<n;c++){
+    let piv=c;
+    for(let r=c+1;r<n;r++) if(Math.abs(M[r][c])>Math.abs(M[piv][c])) piv=r;
+    [M[c],M[piv]]=[M[piv],M[c]];
+    if(Math.abs(M[c][c])<1e-12) return null;
+    for(let r=c+1;r<n;r++){
+      const f=M[r][c]/M[c][c];
+      for(let k=c;k<=n;k++) M[r][k]-=f*M[c][k];
+    }
+  }
+  const hcoef=new Float64Array(8);
+  for(let r=n-1;r>=0;r--){
+    let s=M[r][n];
+    for(let k=r+1;k<n;k++) s-=M[r][k]*hcoef[k];
+    hcoef[r]=s/M[r][r];
+  }
+  return (x,y)=>{
+    const d=hcoef[6]*x+hcoef[7]*y+1;
+    return [(hcoef[0]*x+hcoef[1]*y+hcoef[2])/d,(hcoef[3]*x+hcoef[4]*y+hcoef[5])/d];
+  };
+}
+function meanDisk(g,w,h,cx,cy,r){
+  let s=0,n=0;
+  const x0=Math.max(0,Math.floor(cx-r)),x1=Math.min(w-1,Math.ceil(cx+r));
+  const y0=Math.max(0,Math.floor(cy-r)),y1=Math.min(h-1,Math.ceil(cy+r));
+  for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++)
+    if((x-cx)**2+(y-cy)**2<=r*r){s+=g[y*w+x];n++;}
+  return n?s/n:255;
+}
+function median(arr){const a=[...arr].sort((x,y)=>x-y);return a[(a.length/2)|0];}
+/* ================= core grading ================ */
+const MULTI_RATIO=0.7;
+/* A pencil shade is nowhere near as dark as the printed squares, so "how dark
+   is this bubble compared to pure black" is the wrong question.
+
+   It is also the wrong question to ask how dark the darkest mark is. Students
+   don't press evenly: one bubble scribbled hard and the rest shaded lightly is
+   completely normal, and anchoring on the darkest mark (or on a plain two-way
+   split of all bubbles) puts the bar above every light one, so they read blank.
+
+   So anchor on the blanks instead. Exactly one bubble per question is meant to
+   be filled, which makes the two lightest bubbles in each question blanks by
+   definition — a clean sample of what unmarked paper looks like on THIS photo,
+   including its noise, shadows and scan grain. Anything clearly darker than
+   that is a mark, however lightly it was made. */
+function markThreshold(dk){
+  if(!dk.length) return Infinity;
+  const blanks=[];
+  for(const row of dk){ const s=[...row].sort((a,b)=>a-b); blanks.push(s[0],s[1]); }
+  blanks.sort((a,b)=>a-b);
+  const ceil=blanks[Math.min(blanks.length-1,Math.floor(0.9*blanks.length))];
+  return Math.max(ceil*1.8, ceil+9, 7);         // clearly above blank-paper noise
+}
+function analyzeSheet(sheet){
+  const {g,w,h}=toGray(sheet.canvas);
+  if(!sheet.corners){
+    const c=detectMarkers(g,w,h);
+    if(c){ sheet.corners=c; sheet.cornersOK=true; }
+    else { // fallback defaults; user adjusts manually
+      const mX=w*0.08,mY=h*0.06;
+      sheet.corners=[[mX,mY],[w-mX,mY],[w-mX,h-mY],[mX,h-mY]];
+      sheet.cornersOK=false;
+    }
+  }
+  const N=sheetQ();
+  const MK=markers(N);
+  const H=homography(MK.map(m=>[m.cx,m.cy]),sheet.corners);
+  if(!H){ sheet.answers=[]; sheet.cornersOK=false; return sheet; }
+  // pass 1 — how much darker than its own surrounding paper is each bubble?
+  const dk=[];
+  for(let q=0;q<N;q++){
+    const row=[];
+    for(let o=0;o<4;o++){
+      const [bx,by]=bubbleCenter(q,o);
+      const [px,py]=H(bx,by);
+      const r=scaleAt(H,bx,by,BUB_R);
+      const inner=meanDisk(g,w,h,px,py,r*0.62);   // stay clear of the printed outline
+      // paper reference: sample just above & below the bubble. Columns are close
+      // together horizontally, so keep the samples near-vertical to avoid
+      // straying onto a neighbouring bubble.
+      const ring=[];
+      for(const s of [-1,1]) for(const a of [-0.5,-0.25,0,0.25,0.5]){
+        const dx=Math.sin(a)*r*1.85, dy=s*Math.cos(a)*r*1.85;
+        ring.push(g[Math.min(h-1,Math.max(0,Math.round(py+dy)))*w
+                  + Math.min(w-1,Math.max(0,Math.round(px+dx)))]);
+      }
+      row.push(Math.max(0,median(ring)-inner));
+    }
+    dk.push(row);
+  }
+  // The printed outline and letter put ink in every bubble before the student
+  // touches it, and that has to come off before anything else. Crucially the
+  // amount differs per letter — "B" is a fatter glyph than "A" — so one global
+  // baseline leaves the inkier columns sitting permanently high and blank sheets
+  // come back full of phantom Bs. Subtract a baseline per option column instead.
+  // The 35th percentile, not the median, so a student who answers mostly one
+  // letter can't drag their own column's baseline up onto their own marks.
+  for(let o=0;o<4;o++){
+    const col=dk.map(r=>r[o]).sort((a,b)=>a-b);
+    const base=col[Math.min(col.length-1,Math.floor(0.35*col.length))];
+    for(const row of dk) row[o]=Math.max(0,row[o]-base);
+  }
+  // pass 2 — threshold from this sheet's own spread of darkness
+  const T=markThreshold(dk)*state.sens;
+  const scale=Math.max(isFinite(T)?T*1.6:1,1);
+  sheet.answers=[];
+  for(let q=0;q<N;q++){
+    const d=dk[q];
+    let best=0; for(let o=1;o<4;o++) if(d[o]>d[best]) best=o;
+    let second=-1; for(let o=0;o<4;o++) if(o!==best&&(second<0||d[o]>d[second])) second=o;
+    let choice=null, flag=null;
+    if(d[best]>=T){
+      choice=best;
+      if(d[second]>=T && d[second]>d[best]*MULTI_RATIO) flag='multiple marks';
+    } else flag='blank';
+    sheet.answers.push({choice,flag,fills:d.map(v=>Math.min(1,v/scale))});
+  }
+  return sheet;
+}
+function scaleAt(H,x,y,mm){ // mm length -> pixels at this location
+  const [ax,ay]=H(x,y),[bx,by]=H(x+mm,y);
+  return Math.hypot(bx-ax,by-ay);
+}
+/* ================= step 3: upload & cards ================ */
+const MAXDIM=2000, PDF_DIM=2200;   // bubbles are small in the 8-across grid, so keep detail
+const PDF_WORKER_URL='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+// A Worker can't be loaded directly from a cross-origin CDN URL, so fetch the
+// script once and hand PDF.js a same-origin blob URL instead.
+let _pdfWorkerReady=null;
+function ensurePdfWorker(){
+  if(_pdfWorkerReady) return _pdfWorkerReady;
+  _pdfWorkerReady=(async()=>{
+    const blob=await (await fetch(PDF_WORKER_URL)).blob();
+    pdfjsLib.GlobalWorkerOptions.workerSrc=URL.createObjectURL(blob);
+  })();
+  return _pdfWorkerReady;
+}
+function setStatus(msg){
+  const el=$('#uploadStatus');
+  el.textContent=msg||''; el.style.display=msg?'block':'none';
+}
+$('#sens').addEventListener('change',e=>{
+  state.sens=+e.target.value;
+  for(const s of state.sheets) analyzeSheet(s);
+  renderSheets(); renderResults();
+});
+$('#drop').onclick=()=>$('#fileInput').click();
+$('#fileInput').onchange=e=>{handleFiles(e.target.files); e.target.value='';};
+['dragover','dragleave','drop'].forEach(ev=>$('#drop').addEventListener(ev,e=>{
+  e.preventDefault();
+  $('#drop').classList.toggle('over',ev==='dragover');
+  if(ev==='drop') handleFiles(e.dataTransfer.files);
+}));
+function addSheet(canvas,name){
+  const sheet={id:state.nextId++, name, canvas, corners:null};
+  analyzeSheet(sheet);
+  state.sheets.push(sheet);
+}
+async function handleFiles(files){
+  if(state.numQ===0){ alert('Enter your answer key in step 1 first — it sets how many questions each sheet has.'); return; }
+  $('#keyWarn').textContent='';
+  for(const f of files){
+    const isPdf = f.type==='application/pdf' || /\.pdf$/i.test(f.name);
+    try{
+      if(isPdf) await handlePdf(f);
+      else if(/^image\//.test(f.type)){
+        const img=await loadImage(f);
+        const sc=Math.min(1,MAXDIM/Math.max(img.width,img.height));
+        const c=document.createElement('canvas');
+        c.width=Math.round(img.width*sc); c.height=Math.round(img.height*sc);
+        c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+        addSheet(c, f.name.replace(/\.[^.]+$/,''));
+        renderSheets(); renderResults();
+        await new Promise(r=>setTimeout(r,0)); // keep UI responsive
+      }
+    }catch(err){ alert(`Could not read ${f.name}: ${err.message}`); }
+  }
+  setStatus('');
+}
+async function handlePdf(f){
+  if(!window.pdfjsLib) throw new Error('PDF support needs an internet connection (the PDF library did not load).');
+  const base=f.name.replace(/\.[^.]+$/,'');
+  setStatus(`Opening ${base}…`);
+  await ensurePdfWorker();
+  const data=await f.arrayBuffer();
+  const pdf=await pdfjsLib.getDocument({data}).promise;
+  for(let p=1;p<=pdf.numPages;p++){
+    setStatus(`Reading ${base}: page ${p} of ${pdf.numPages}…`);
+    const page=await pdf.getPage(p);
+    const v1=page.getViewport({scale:1});
+    const scale=Math.min(3, PDF_DIM/Math.max(v1.width,v1.height));
+    const vp=page.getViewport({scale});
+    const c=document.createElement('canvas');
+    c.width=Math.round(vp.width); c.height=Math.round(vp.height);
+    const ctx=c.getContext('2d');
+    ctx.fillStyle='#fff'; ctx.fillRect(0,0,c.width,c.height); // flatten any transparency
+    await page.render({canvasContext:ctx, viewport:vp}).promise;
+    addSheet(c, pdf.numPages>1 ? `${base} – p${p}` : base);
+    renderSheets(); renderResults();
+    await new Promise(r=>setTimeout(r,0)); // keep UI responsive between pages
+  }
+}
+function loadImage(file){
+  return new Promise((res,rej)=>{
+    const url=URL.createObjectURL(file), img=new Image();
+    img.onload=()=>{URL.revokeObjectURL(url);res(img);};
+    img.onerror=()=>rej(new Error('unsupported image format'));
+    img.src=url;
+  });
+}
+function scoreOf(sheet){
+  let s=0; const wrong=[];
+  for(let q=0;q<state.numQ;q++){
+    const a=sheet.answers?.[q];
+    if(a && a.choice!=null && a.choice===state.key[q]) s++;
+    else wrong.push(q);
+  }
+  return {score:s,wrong};
+}
+function renderSheets(){
+  const host=$('#sheets'); host.innerHTML='';
+  for(const sheet of state.sheets){
+    const card=document.createElement('div'); card.className='sheet';
+    const {score}=scoreOf(sheet);
+    const keyReady=state.numQ>0 && state.key.every(k=>k!=null);
+    const graded=(sheet.answers||[]).slice(0,state.numQ);
+    const flags=graded.map((a,i)=>a.flag==='multiple marks'?`Q${i+1}: ${a.flag}`:null).filter(Boolean);
+    card.innerHTML=`
+      <div class="top">
+        <input class="sname" type="text" value="${sheet.name.replace(/"/g,'&quot;')}" title="Student name">
+        ${sheet.cornersOK
+          ?`<span class="badge score">${keyReady?`${score} / ${state.numQ}`:'key incomplete'}</span>`
+          :`<span class="badge err">markers not found — click “Adjust corners”</span>`}
+        <div class="actions">
+          <button class="secondary act-corners">Adjust corners</button>
+          <button class="secondary act-rotate">Rotate 90°</button>
+          <button class="secondary act-del">Remove</button>
+        </div>
+      </div>
+      ${flags.length?`<div class="flagsline">⚠ Check: ${flags.join(' · ')} — click a chip to correct.</div>`:''}
+      <div class="chips"></div>`;
+    const chips=card.querySelector('.chips');
+    graded.forEach((a,q)=>{
+      const chip=document.createElement('span'); chip.className='chip';
+      const letter=a.choice==null?'–':LETTERS[a.choice];
+      chip.innerHTML=`<span class="qn">${q+1}</span><b>${letter}</b>`;
+      if(a.flag) chip.classList.add('flagged');
+      else if(keyReady) chip.classList.add(a.choice===state.key[q]?'ok':'wrong');
+      chip.title=`Q${q+1}: detected ${letter}${a.flag?' ('+a.flag+')':''} — click to change`;
+      chip.onclick=()=>{ // cycle A→B→C→D→blank
+        a.choice=(a.choice==null)?0:(a.choice===3?null:a.choice+1);
+        a.flag=null;
+        renderSheets(); renderResults();
+      };
+      chips.appendChild(chip);
+    });
+    card.querySelector('.sname').addEventListener('input',e=>{sheet.name=e.target.value; renderResults();});
+    card.querySelector('.act-del').onclick=()=>{state.sheets=state.sheets.filter(s=>s!==sheet); renderSheets(); renderResults();};
+    card.querySelector('.act-rotate').onclick=()=>{
+      const c=document.createElement('canvas');
+      c.width=sheet.canvas.height; c.height=sheet.canvas.width;
+      const ctx=c.getContext('2d');
+      ctx.translate(c.width/2,c.height/2); ctx.rotate(Math.PI/2);
+      ctx.drawImage(sheet.canvas,-sheet.canvas.width/2,-sheet.canvas.height/2);
+      sheet.canvas=c; sheet.corners=null; analyzeSheet(sheet);
+      renderSheets(); renderResults();
+    };
+    card.querySelector('.act-corners').onclick=()=>openCornerEditor(sheet);
+    host.appendChild(card);
+  }
+}
+function regradeAll(){ renderSheets(); renderResults(); }
+/* ================= corner editor modal ================ */
+let modalSheet=null, modalCorners=null, dragIdx=-1, modalScale=1;
+function openCornerEditor(sheet){
+  modalSheet=sheet;
+  modalCorners=sheet.corners.map(p=>[...p]);
+  const cv=$('#modalCanvas');
+  modalScale=Math.min(1, 1100/sheet.canvas.width, 700/sheet.canvas.height);
+  cv.width=sheet.canvas.width*modalScale; cv.height=sheet.canvas.height*modalScale;
+  drawModal(); $('#modal').classList.add('open');
+}
+function drawModal(){
+  const cv=$('#modalCanvas'), ctx=cv.getContext('2d');
+  ctx.drawImage(modalSheet.canvas,0,0,cv.width,cv.height);
+  ctx.strokeStyle='#4f46e5'; ctx.lineWidth=2; ctx.beginPath();
+  modalCorners.forEach((p,i)=>ctx[i?'lineTo':'moveTo'](p[0]*modalScale,p[1]*modalScale));
+  ctx.closePath(); ctx.stroke();
+  const names=['TL','TR','BR','BL'];
+  modalCorners.forEach((p,i)=>{
+    ctx.beginPath(); ctx.arc(p[0]*modalScale,p[1]*modalScale,9,0,7);
+    ctx.fillStyle='rgba(79,70,229,.9)'; ctx.fill();
+    ctx.fillStyle='#fff'; ctx.font='bold 9px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(names[i],p[0]*modalScale,p[1]*modalScale);
+  });
+}
+$('#modalCanvas').addEventListener('pointerdown',e=>{
+  const r=e.target.getBoundingClientRect();
+  const x=(e.clientX-r.left)*(e.target.width/r.width), y=(e.clientY-r.top)*(e.target.height/r.height);
+  dragIdx=-1; let bd=400;
+  modalCorners.forEach((p,i)=>{
+    const d=(p[0]*modalScale-x)**2+(p[1]*modalScale-y)**2;
+    if(d<bd){bd=d;dragIdx=i;}
+  });
+  if(dragIdx>=0) e.target.setPointerCapture(e.pointerId);
+});
+$('#modalCanvas').addEventListener('pointermove',e=>{
+  if(dragIdx<0) return;
+  const r=e.target.getBoundingClientRect();
+  const x=(e.clientX-r.left)*(e.target.width/r.width), y=(e.clientY-r.top)*(e.target.height/r.height);
+  modalCorners[dragIdx]=[x/modalScale,y/modalScale]; drawModal();
+});
+$('#modalCanvas').addEventListener('pointerup',()=>dragIdx=-1);
+$('#modalCancel').onclick=()=>$('#modal').classList.remove('open');
+$('#modalApply').onclick=()=>{
+  modalSheet.corners=modalCorners; modalSheet.cornersOK=true;
+  analyzeSheet(modalSheet);
+  $('#modal').classList.remove('open');
+  renderSheets(); renderResults();
+};
+/* ================= step 4: results & excel export ================ */
+function renderResults(){
+  const host=$('#results');
+  if(!state.sheets.length){host.innerHTML='<p class="empty">No sheets graded yet.</p>';$('#exportBtn').disabled=true;return;}
+  const keyReady=state.numQ>0 && state.key.every(k=>k!=null);
+  let html='';
+  if(!keyReady) html+='<p class="empty">⚠ Finish the answer key in step 1 to see scores.</p>';
+  html+='<table><tr><th>Student</th><th>Score</th><th>%</th><th>Questions wrong</th></tr>';
+  for(const sh of state.sheets){
+    const {score,wrong}=scoreOf(sh);
+    html+=`<tr><td>${(sh.name||'(unnamed)').replace(/</g,'&lt;')}</td>
+      <td class="num">${keyReady?score+' / '+state.numQ:'—'}</td>
+      <td class="num">${keyReady?Math.round(100*score/state.numQ)+'%':'—'}</td>
+      <td>${keyReady?(wrong.length?wrong.map(q=>q+1).join(', '):'none 🎉'):'—'}</td></tr>`;
+  }
+  html+='</table>';
+  host.innerHTML=html;
+  $('#exportBtn').disabled=!keyReady;
+}
+$('#exportBtn').onclick=()=>{
+  const n=state.numQ;
+  const rows=[['Student Name','Score',`Out of`,'Percentage','Questions Wrong','Details']];
+  for(const sh of state.sheets){
+    const {score,wrong}=scoreOf(sh);
+    const details=wrong.map(q=>{
+      const a=sh.answers?.[q];
+      const got=(a&&a.choice!=null)?LETTERS[a.choice]:'blank';
+      return `Q${q+1}: ${got} (correct ${LETTERS[state.key[q]]})`;
+    }).join('; ');
+    rows.push([sh.name||'(unnamed)',score,n,Math.round(10000*score/n)/100+'%',
+               wrong.map(q=>q+1).join(', '),details]);
+  }
+  // per-question analysis
+  const qa=[['Question','Correct Answer','# Correct','# Wrong','% Correct','Most Common Wrong Answer']];
+  for(let q=0;q<n;q++){
+    let ok=0; const wrongCount={A:0,B:0,C:0,D:0,blank:0};
+    for(const sh of state.sheets){
+      const a=sh.answers?.[q];
+      if(a&&a.choice===state.key[q]) ok++;
+      else wrongCount[(a&&a.choice!=null)?LETTERS[a.choice]:'blank']++;
+    }
+    const tot=state.sheets.length;
+    const worst=Object.entries(wrongCount).sort((a,b)=>b[1]-a[1])[0];
+    qa.push([q+1,LETTERS[state.key[q]],ok,tot-ok,Math.round(100*ok/tot)+'%',
+             worst[1]>0?`${worst[0]} (${worst[1]})`:'—']);
+  }
+  const fname=`results_${new Date().toISOString().slice(0,10)}`;
+  try{
+    const wb=XLSX.utils.book_new();
+    const ws1=XLSX.utils.aoa_to_sheet(rows);
+    ws1['!cols']=[{wch:24},{wch:8},{wch:8},{wch:11},{wch:24},{wch:60}];
+    XLSX.utils.book_append_sheet(wb,ws1,'Results');
+    const ws2=XLSX.utils.aoa_to_sheet(qa);
+    ws2['!cols']=[{wch:9},{wch:14},{wch:10},{wch:9},{wch:10},{wch:24}];
+    XLSX.utils.book_append_sheet(wb,ws2,'Question Analysis');
+    XLSX.writeFile(wb,fname+'.xlsx');
+  }catch(e){ // offline fallback: CSV
+    const csv=rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+    a.download=fname+'.csv'; a.click();
+  }
+};
+/* ================= self-test (synthetic sheets, run from console: selfTest()) ================ */
+async function selfTest(){
+  const savedQ=state.numQ, savedKey=state.key;
+  const cases=[{n:40,deg:0},{n:40,deg:2.5},{n:40,deg:-4},{n:40,deg:91},
+               {n:20,deg:0},{n:20,deg:3},{n:10,deg:-5},{n:60,deg:2}];
+  const out=[];
+  for(const c of cases){
+    state.numQ=c.n;
+    const N=sheetQ();
+    const truth=[];
+    for(let q=0;q<N;q++){
+      const r=Math.random();
+      // vary how hard each answer is pressed: real classes never mark evenly
+      const shade=0.25+0.65*Math.random();
+      if(r<0.05) truth.push({choice:null,multi:false,shade});               // blank
+      else if(r<0.10) truth.push({choice:(Math.random()*4)|0,multi:true,shade}); // double-marked
+      else truth.push({choice:(Math.random()*4)|0,multi:false,shade});
+    }
+    const canvas=makeSynthetic(N,truth,c.deg);
+    const sheet={canvas,corners:null};
+    analyzeSheet(sheet);
+    let good=0,bad=[],flagsOK=0,flagsExp=0;
+    truth.forEach((t,q)=>{
+      const a=sheet.answers[q];
+      if(t.multi){flagsExp++; if(a.flag==='multiple marks'&&(a.choice===t.choice||a.choice===(t.choice+1)%4))flagsOK++; return;}
+      if(t.choice==null){flagsExp++; if(a.choice==null)flagsOK++; return;}
+      if(a.choice===t.choice)good++; else bad.push(`Q${q+1} want ${LETTERS[t.choice]} got ${a.choice==null?'-':LETTERS[a.choice]} fills=[${a.fills.map(f=>f.toFixed(2))}]`);
+    });
+    const plain=truth.filter(t=>!t.multi&&t.choice!=null).length;
+    out.push(`n=${c.n} rot=${c.deg}°: corners=${sheet.cornersOK?'ok':'FAIL'} answers ${good}/${plain}`+
+             ` flags ${flagsOK}/${flagsExp}`+(bad.length?` BAD: ${bad.slice(0,5).join(' | ')}`:''));
+  }
+  state.numQ=savedQ; state.key=savedKey;
+  return out.join('\n');
+}
+function makeSynthetic(n,truth,deg){
+  const s=8; // px per mm
+  const p=pageSize(n);
+  const page=document.createElement('canvas');
+  page.width=Math.round(p.w*s); page.height=Math.round(p.h*s);
+  const ctx=page.getContext('2d');
+  ctx.fillStyle='#fdfdfb'; ctx.fillRect(0,0,page.width,page.height);
+  ctx.fillStyle='#111';
+  for(const m of markers(n)) ctx.fillRect((m.cx-m.s/2)*s,(m.cy-m.s/2)*s,m.s*s,m.s*s);
+  for(let q=0;q<n;q++){
+    const [x0,y0]=bubbleCenter(q,0);
+    ctx.fillStyle='#000'; ctx.font=`bold ${2.2*s}px sans-serif`; ctx.textAlign='right'; ctx.textBaseline='middle';
+    ctx.fillText(String(q+1),(x0-BUB_R-0.4)*s,y0*s);
+    for(let o=0;o<4;o++){
+      const [cx,cy]=bubbleCenter(q,o);
+      ctx.beginPath(); ctx.arc(cx*s,cy*s,BUB_R*s,0,7);
+      ctx.strokeStyle='#000'; ctx.lineWidth=0.35*s; ctx.stroke();
+      ctx.fillStyle='#000'; ctx.font=`bold ${1.7*s}px sans-serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(LETTERS[o],cx*s,cy*s);
+      const t=truth[q];
+      const marked=(t.choice===o)||(t.multi&&o===(t.choice+1)%4);
+      if(marked){ ctx.beginPath(); ctx.arc(cx*s,cy*s,BUB_R*0.95*s,0,7);
+        ctx.globalCompositeOperation='multiply';
+        const lv=Math.round(255*(1-truth[q].shade));
+        ctx.fillStyle=`rgb(${lv},${lv},${lv+6})`; ctx.fill();
+        ctx.globalCompositeOperation='source-over'; }
+    }
+    ctx.textBaseline='alphabetic';
+  }
+  // place the page on a darker background, rotated, like a real photo
+  const out=document.createElement('canvas');
+  out.width=1700; out.height=1900;
+  const octx=out.getContext('2d');
+  octx.fillStyle='#8d8579'; octx.fillRect(0,0,out.width,out.height);
+  octx.translate(out.width/2,out.height/2);
+  octx.rotate(deg*Math.PI/180);
+  const fit=Math.min(out.width/page.width,out.height/page.height)*0.78;
+  octx.scale(fit,fit);
+  octx.drawImage(page,-page.width/2,-page.height/2);
+  return out;
+}
+window.selfTest=selfTest;
+/* ================= init ================ */
+renderKeyGrid(); syncKeyText(); renderResults();
+</script>
+</body>
+</html>
