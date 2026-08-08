@@ -94,7 +94,7 @@
   <section class="card">
     <h2><span class="step">2</span>Print answer sheets</h2>
     <button id="printBtn">Print / save sheet as PDF</button>
-    <div class="hint">One slip holds 40 questions. Shorter tests use the same slip — only the first <span id="prtGraded">40</span> rows are graded, so a single printed batch covers any test up to 40 questions.</div>
+    <div class="hint">There's a name line at the top; when you upload, that strip is shown beside each sheet so you can read it while typing. One slip holds 40 questions. Shorter tests use the same slip — only the first <span id="prtGraded">40</span> rows are graded, so a single printed batch covers any test up to 40 questions.</div>
   </section>
   <section class="card">
     <h2><span class="step">3</span>Upload filled sheets</h2>
@@ -133,15 +133,22 @@
 <script>
 'use strict';
 /* ================= geometry (mm, shared by printer & grader) =================
-   Bubbles only — no title, no name box, no instructions. One sheet = 40
-   questions in an 8 across × 5 down grid, and the paper is exactly as big as
-   that grid needs, with the four alignment squares packed tight around it. */
+   40 questions in an 8 across × 5 down grid, with the four alignment squares
+   packed tight around it and a name line above them.
+
+   The name band sits OUTSIDE the square-to-square rectangle on purpose. The
+   grader locates the four squares and maps the bubble grid onto them, so
+   anything added between them would move every bubble and invalidate sheets
+   that are already printed. Adding height above the top squares shifts the
+   whole fiducial rectangle down as one piece and leaves the bubbles exactly
+   where they were relative to it — old sheets still grade correctly. */
 const QPR=8, ROWS_PER_BLOCK=5, Q_PER_BLOCK=QPR*ROWS_PER_BLOCK;
 const ROW_PITCH=6.5, BLOCK_GAP=4;
 const COL_W=20, LABEL_W=5, BUB_PITCH=3.9, BUB_R=1.55;
 const MARK_S=9, MARK_S_SMALL=6.5;   // BL is the small one -> tells us orientation
 const PAGE_PAD=3, QUIET=3.5;        // paper edge -> square, and square -> bubbles
 const ORIGIN=PAGE_PAD+MARK_S+QUIET; // top-left of the answer area
+const NAME_H=13;                    // name band, above the top squares
 const LETTERS=['A','B','C','D'];
 function gridShape(n){
   const blocks=Math.max(1,Math.ceil(n/Q_PER_BLOCK));
@@ -152,18 +159,18 @@ function pageSize(n){
   const {blocks,rows}=gridShape(n);
   const cols=Math.max(1,Math.min(QPR,n));
   return {w:(cols-1)*COL_W+LABEL_W+3*BUB_PITCH+BUB_R+2*ORIGIN,
-          h:(rows-1)*ROW_PITCH+(blocks-1)*BLOCK_GAP+2*BUB_R+2*ORIGIN};
+          h:(rows-1)*ROW_PITCH+(blocks-1)*BLOCK_GAP+2*BUB_R+2*ORIGIN+NAME_H};
 }
 function markers(n){                // [TL,TR,BR,BL]
-  const p=pageSize(n), o=PAGE_PAD+MARK_S/2;
-  return [{cx:o,cy:o,s:MARK_S},{cx:p.w-o,cy:o,s:MARK_S},
+  const p=pageSize(n), o=PAGE_PAD+MARK_S/2, t=NAME_H+o;
+  return [{cx:o,cy:t,s:MARK_S},{cx:p.w-o,cy:t,s:MARK_S},
           {cx:p.w-o,cy:p.h-o,s:MARK_S},{cx:o,cy:p.h-o,s:MARK_S_SMALL}];
 }
 function bubbleCenter(q,opt){       // 0-based question & option -> mm centre
   const block=Math.floor(q/Q_PER_BLOCK), rem=q-block*Q_PER_BLOCK;
   const row=Math.floor(rem/QPR), col=rem%QPR;
   return [ORIGIN+col*COL_W+LABEL_W+opt*BUB_PITCH,
-          ORIGIN+BUB_R+(block*ROWS_PER_BLOCK+row)*ROW_PITCH+block*BLOCK_GAP];
+          NAME_H+ORIGIN+BUB_R+(block*ROWS_PER_BLOCK+row)*ROW_PITCH+block*BLOCK_GAP];
 }
 /* ================= app state ================ */
 const MAX_Q=200, GHOSTS=8;   // spare click-slots shown after the last question
@@ -239,6 +246,8 @@ $('#keyText').addEventListener('input',e=>{
 function sheetHTML(){
   const n=sheetQ(), p=pageSize(n);
   let items='';
+  items+=`<div style="position:absolute;left:${ORIGIN}mm;top:${NAME_H*0.22}mm;font-size:4.2mm;line-height:6mm;font-weight:700;color:#000">Name:</div>`;
+  items+=`<div style="position:absolute;left:${ORIGIN+19}mm;top:${NAME_H*0.22+5.6}mm;width:${p.w-2*ORIGIN-19}mm;border-bottom:0.4mm solid #000"></div>`;
   for(const m of markers(n))
     items+=`<div style="position:absolute;left:${m.cx-m.s/2}mm;top:${m.cy-m.s/2}mm;width:${m.s}mm;height:${m.s}mm;background:#000"></div>`;
   for(let q=0;q<n;q++){
@@ -439,6 +448,7 @@ function analyzeSheet(sheet){
   const MK=markers(N);
   const H=homography(MK.map(m=>[m.cx,m.cy]),sheet.corners);
   if(!H){ sheet.answers=[]; sheet.cornersOK=false; return sheet; }
+  cropName(sheet,H,N);
   // pass 1 — how much darker than its own surrounding paper is each bubble?
   const dk=[];
   for(let q=0;q<N;q++){
@@ -489,6 +499,23 @@ function analyzeSheet(sheet){
     sheet.answers.push({choice,flag,fills:d.map(v=>Math.min(1,v/scale))});
   }
   return sheet;
+}
+/* The name band lies above the top squares, so the homography can point at it
+   even though it sits outside the four corners. Lift it out as a little image
+   and show it on the card — the teacher reads the handwriting instead of
+   flipping back to the photo to type each name. */
+function cropName(sheet,H,N){
+  sheet.nameCrop=null;
+  const p=pageSize(N), pad=1.5;
+  const pts=[[pad,pad],[p.w-pad,pad],[p.w-pad,NAME_H-0.5],[pad,NAME_H-0.5]].map(([x,y])=>H(x,y));
+  const xs=pts.map(q=>q[0]), ys=pts.map(q=>q[1]);
+  const x0=Math.max(0,Math.floor(Math.min(...xs))), x1=Math.min(sheet.canvas.width, Math.ceil(Math.max(...xs)));
+  const y0=Math.max(0,Math.floor(Math.min(...ys))), y1=Math.min(sheet.canvas.height,Math.ceil(Math.max(...ys)));
+  if(x1-x0<40||y1-y0<12) return;              // band cropped out of frame
+  const c=document.createElement('canvas');
+  c.width=x1-x0; c.height=y1-y0;
+  c.getContext('2d').drawImage(sheet.canvas,x0,y0,c.width,c.height,0,0,c.width,c.height);
+  try{ sheet.nameCrop=c.toDataURL('image/jpeg',0.85); }catch(e){}
 }
 function scaleAt(H,x,y,mm){ // mm length -> pixels at this location
   const [ax,ay]=H(x,y),[bx,by]=H(x+mm,y);
@@ -601,6 +628,7 @@ function renderSheets(){
     card.innerHTML=`
       <div class="top">
         <input class="sname" type="text" value="${sheet.name.replace(/"/g,'&quot;')}" title="Student name">
+        ${sheet.nameCrop?`<img class="namecrop" src="${sheet.nameCrop}" alt="handwritten name" title="Name written on the sheet">`:''}
         ${sheet.cornersOK
           ?`<span class="badge score">${keyReady?`${score} / ${state.numQ}`:'key incomplete'}</span>`
           :`<span class="badge err">markers not found — click “Adjust corners”</span>`}
