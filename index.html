@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MCQ marker</title>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
   :root{
@@ -26,6 +28,9 @@
   label{font-size:13px;color:var(--muted)}
   input[type=text],input[type=number],select{font:inherit;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink)}
   input[type=number]{width:80px}
+  textarea{font:inherit;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);resize:vertical;width:100%}
+  .badge.dupe{background:var(--warn-soft);color:var(--warn)}
+  .badge.read{background:var(--ok-soft);color:var(--ok)}
   button{font:inherit;border:none;border-radius:8px;padding:8px 16px;cursor:pointer;background:var(--accent);color:#fff}
   button.secondary{background:#fff;color:var(--ink);border:1px solid var(--line)}
   button:disabled{opacity:.45;cursor:default}
@@ -505,21 +510,121 @@ function analyzeSheet(sheet){
    and show it on the card — the teacher reads the handwriting instead of
    flipping back to the photo to type each name. */
 function cropName(sheet,H,N){
-  sheet.nameCrop=null;
-  const p=pageSize(N), pad=1.5;
-  const pts=[[pad,pad],[p.w-pad,pad],[p.w-pad,NAME_H-0.5],[pad,NAME_H-0.5]].map(([x,y])=>H(x,y));
-  const xs=pts.map(q=>q[0]), ys=pts.map(q=>q[1]);
-  const x0=Math.max(0,Math.floor(Math.min(...xs))), x1=Math.min(sheet.canvas.width, Math.ceil(Math.max(...xs)));
-  const y0=Math.max(0,Math.floor(Math.min(...ys))), y1=Math.min(sheet.canvas.height,Math.ceil(Math.max(...ys)));
-  if(x1-x0<40||y1-y0<12) return;              // band cropped out of frame
-  const c=document.createElement('canvas');
-  c.width=x1-x0; c.height=y1-y0;
-  c.getContext('2d').drawImage(sheet.canvas,x0,y0,c.width,c.height,0,0,c.width,c.height);
-  try{ sheet.nameCrop=c.toDataURL('image/jpeg',0.85); }catch(e){}
+  sheet.nameCrop=null; sheet.nameCanvas=null; sheet.nameCropAR=4;
+  // Sample the writing area only: right of the printed "Name:" label and above
+  // the printed rule, so neither ends up in the picture.
+  const p=pageSize(N), x0=ORIGIN+18, x1=p.w-ORIGIN, y0=1.0, y1=NAME_H*0.22+5.0;
+  // Pull the strip through the homography pixel by pixel rather than taking a
+  // bounding box around it. A photo is never perfectly square-on, and the
+  // bounding box of a tilted strip reaches into the printed rule below it and
+  // the desk beyond the paper's edge. Sampling through H crops exactly the
+  // strip and straightens it at the same time, which the OCR also prefers.
+  const perMM=scaleAt(H,x0,y0,1)||3;
+  const S=Math.max(4,Math.min(16,perMM*1.6));            // output pixels per mm
+  const ow=Math.round((x1-x0)*S), oh=Math.round((y1-y0)*S);
+  if(ow<40||oh<10) return;
+  const sc=sheet.canvas;
+  let sd;
+  try{ sd=sc.getContext('2d',{willReadFrequently:true}).getImageData(0,0,sc.width,sc.height).data; }
+  catch(e){ return; }
+  const out=document.createElement('canvas'); out.width=ow; out.height=oh;
+  const octx=out.getContext('2d'), od=octx.createImageData(ow,oh), dd=od.data;
+  let seen=0;
+  for(let j=0;j<oh;j++) for(let i=0;i<ow;i++){
+    const [sx,sy]=H(x0+(i+0.5)/S, y0+(j+0.5)/S);
+    const xi=Math.round(sx), yi=Math.round(sy), o=(j*ow+i)*4;
+    dd[o+3]=255;
+    if(xi<0||yi<0||xi>=sc.width||yi>=sc.height){ dd[o]=dd[o+1]=dd[o+2]=255; continue; }
+    const q=(yi*sc.width+xi)*4;
+    dd[o]=sd[q]; dd[o+1]=sd[q+1]; dd[o+2]=sd[q+2]; seen++;
+  }
+  if(seen<ow*oh*0.5) return;                              // strip mostly out of frame
+  octx.putImageData(od,0,0);
+  const t=trimToInk(out)||out;
+  sheet.nameCanvas=t;
+  try{ sheet.nameCrop=t.toDataURL('image/jpeg',0.9); sheet.nameCropAR=t.width/t.height; }catch(e){}
+}
+/* The writing area is a long thin strip and the name only occupies the start of
+   it. Shrink to the ink so the picture pasted into the spreadsheet is the name
+   itself rather than a ribbon of blank paper. */
+function trimToInk(c){
+  const ctx=c.getContext('2d',{willReadFrequently:true});
+  let d; try{ d=ctx.getImageData(0,0,c.width,c.height).data; }catch(e){ return null; }
+  const n=c.width*c.height, g=new Uint8Array(n);
+  let mx=0;
+  for(let i=0,q=0;i<n;i++,q+=4){ g[i]=(d[q]*0.299+d[q+1]*0.587+d[q+2]*0.114)|0; if(g[i]>mx)mx=g[i]; }
+  const thr=mx*0.68;
+  let x0=c.width,x1=-1,y0=c.height,y1=-1;
+  for(let y=0;y<c.height;y++)for(let x=0;x<c.width;x++)
+    if(g[y*c.width+x]<thr){ if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; }
+  if(x1<0||y1<0) return null;                       // nothing written
+  const pad=Math.max(3,Math.round(c.height*0.12));
+  x0=Math.max(0,x0-pad); x1=Math.min(c.width-1,x1+pad);
+  y0=Math.max(0,y0-pad); y1=Math.min(c.height-1,y1+pad);
+  const w=x1-x0+1, h=y1-y0+1;
+  if(w<12||h<8) return null;
+  const out=document.createElement('canvas'); out.width=w; out.height=h;
+  out.getContext('2d').drawImage(c,x0,y0,w,h,0,0,w,h);
+  return out;
 }
 function scaleAt(H,x,y,mm){ // mm length -> pixels at this location
   const [ax,ay]=H(x,y),[bx,by]=H(x+mm,y);
   return Math.hypot(bx-ax,by-ay);
+}
+const normName=s=>s.toLowerCase().replace(/[^a-z0-9]+/g,'');
+/* ================= reading the handwritten name =================
+   Handwriting OCR is approximate, so every reading is surfaced as a guess for
+   the teacher to confirm rather than trusted silently. */
+let ocrWorker=null, ocrBusy=false;
+const titleCase=t=>t.toLowerCase().replace(/\b[a-z]/g,c=>c.toUpperCase());
+/* Tesseract does much better on a big, hard-thresholded image than on a small
+   grey one, so scale up and binarise with the same Otsu split used for grading. */
+function ocrPrep(c){
+  const S=Math.max(2,Math.ceil(110/c.height));
+  const o=document.createElement('canvas'); o.width=c.width*S; o.height=c.height*S;
+  const x=o.getContext('2d',{willReadFrequently:true});
+  x.fillStyle='#fff'; x.fillRect(0,0,o.width,o.height);
+  x.drawImage(c,0,0,o.width,o.height);
+  const im=x.getImageData(0,0,o.width,o.height), d=im.data;
+  const g=new Uint8ClampedArray(o.width*o.height);
+  for(let i=0,q=0;i<g.length;i++,q+=4) g[i]=(d[q]*0.299+d[q+1]*0.587+d[q+2]*0.114)|0;
+  const t=otsu(g);
+  for(let i=0,q=0;i<g.length;i++,q+=4){ const v=g[i]<t?0:255; d[q]=d[q+1]=d[q+2]=v; d[q+3]=255; }
+  x.putImageData(im,0,0);
+  return o;
+}
+async function getOCR(){
+  if(ocrWorker) return ocrWorker;
+  if(typeof Tesseract==='undefined') return null;
+  setStatus('Loading the handwriting reader (first time only)…');
+  ocrWorker=await Tesseract.createWorker('eng');
+  await ocrWorker.setParameters({
+    tessedit_pageseg_mode:'7',                       // one line of text
+    tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz .'-"});
+  return ocrWorker;
+}
+function applyReadName(sh,raw){
+  const txt=(raw||'').replace(/[^A-Za-z .'-]/g,' ').replace(/\s+/g,' ').trim();
+  sh.nameRaw=txt;
+  if(txt.length<2){ sh.nameStatus='unread'; return; }
+  sh.name=titleCase(txt); sh.nameStatus='guess';
+}
+async function readNames(){
+  if(ocrBusy) return; ocrBusy=true;
+  try{
+    const todo=state.sheets.filter(s=>s.nameCanvas&&!s.nameEdited&&!s.nameRead);
+    if(!todo.length) return;
+    const wkr=await getOCR();
+    if(!wkr){ state.sheets.forEach(s=>s.nameRead=true); return; }
+    let i=0;
+    for(const sh of todo){
+      setStatus(`Reading names from the sheets… ${++i} of ${todo.length}`);
+      try{ const {data}=await wkr.recognize(ocrPrep(sh.nameCanvas)); applyReadName(sh,data.text); }
+      catch(e){ sh.nameStatus='unread'; }
+      sh.nameRead=true;
+      renderSheets(); renderResults();
+    }
+  } finally { ocrBusy=false; setStatus(''); }
 }
 /* ================= step 3: upload & cards ================ */
 const MAXDIM=2000, PDF_DIM=2200;   // bubbles are small in the 8-across grid, so keep detail
@@ -576,6 +681,7 @@ async function handleFiles(files){
     }catch(err){ alert(`Could not read ${f.name}: ${err.message}`); }
   }
   setStatus('');
+  readNames();
 }
 async function handlePdf(f){
   if(!window.pdfjsLib) throw new Error('PDF support needs an internet connection (the PDF library did not load).');
@@ -625,9 +731,17 @@ function renderSheets(){
     const keyReady=state.numQ>0 && state.key.every(k=>k!=null);
     const graded=(sheet.answers||[]).slice(0,state.numQ);
     const flags=graded.map((a,i)=>a.flag==='multiple marks'?`Q${i+1}: ${a.flag}`:null).filter(Boolean);
+    // two sheets under one name would quietly collide in the spreadsheet
+    const dupe=sheet.name && state.sheets.some(o=>o!==sheet&&normName(o.name)===normName(sheet.name));
+    const readBadge=sheet.nameEdited?''
+      : sheet.nameStatus==='read'  ? '<span class="badge read" title="Read from the sheet and matched to your class list">read from sheet</span>'
+      : sheet.nameStatus==='guess' ? `<span class="badge dupe" title="Best guess${sheet.nameRaw?' from &quot;'+sheet.nameRaw.replace(/"/g,'')+'&quot;':''} — please check">check name</span>`
+      : sheet.nameStatus==='unread'? '<span class="badge dupe" title="Nothing legible in the name area">name unreadable</span>' : '';
     card.innerHTML=`
       <div class="top">
-        <input class="sname" type="text" value="${sheet.name.replace(/"/g,'&quot;')}" title="Student name">
+        <input class="sname" type="text" value="${sheet.name.replace(/"/g,'&quot;')}"
+               placeholder="Student name" title="Student name — pick from your class list or type it">
+        ${readBadge}${dupe?`<span class="badge dupe">duplicate name</span>`:''}
         ${sheet.nameCrop?`<img class="namecrop" src="${sheet.nameCrop}" alt="handwritten name" title="Name written on the sheet">`:''}
         ${sheet.cornersOK
           ?`<span class="badge score">${keyReady?`${score} / ${state.numQ}`:'key incomplete'}</span>`
@@ -655,7 +769,10 @@ function renderSheets(){
       };
       chips.appendChild(chip);
     });
-    card.querySelector('.sname').addEventListener('input',e=>{sheet.name=e.target.value; renderResults();});
+    const nameBox=card.querySelector('.sname');
+    nameBox.addEventListener('input',e=>{sheet.name=e.target.value; sheet.nameEdited=true; renderResults();});
+    nameBox.addEventListener('change',()=>renderSheets());   // refresh the duplicate badge
+    nameBox.addEventListener('focus',e=>e.target.select());
     card.querySelector('.act-del').onclick=()=>{state.sheets=state.sheets.filter(s=>s!==sheet); renderSheets(); renderResults();};
     card.querySelector('.act-rotate').onclick=()=>{
       const c=document.createElement('canvas');
@@ -738,19 +855,32 @@ function renderResults(){
   host.innerHTML=html;
   $('#exportBtn').disabled=!keyReady;
 }
-$('#exportBtn').onclick=()=>{
+$('#exportBtn').onclick=async()=>{
   const n=state.numQ;
-  const rows=[['Student Name','Score',`Out of`,'Percentage','Questions Wrong','Details']];
+  const rows=[['Student Name','Name on Sheet','Score',`Out of`,'Percentage']];
+  const scores=[];
   for(const sh of state.sheets){
-    const {score,wrong}=scoreOf(sh);
-    const details=wrong.map(q=>{
-      const a=sh.answers?.[q];
-      const got=(a&&a.choice!=null)?LETTERS[a.choice]:'blank';
-      return `Q${q+1}: ${got} (correct ${LETTERS[state.key[q]]})`;
-    }).join('; ');
-    rows.push([sh.name||'(unnamed)',score,n,Math.round(10000*score/n)/100+'%',
-               wrong.map(q=>q+1).join(', '),details]);
+    const {score}=scoreOf(sh);
+    scores.push(score);
+    rows.push([sh.name||'(unnamed)','',score,n,Math.round(10000*score/n)/100+'%']);
   }
+  /* Class statistics. The class is the whole group being described, not a
+     sample drawn from a larger one, so the spread is the population standard
+     deviation (divide by N, not N-1). */
+  const cnt=scores.length;
+  const mean=cnt?scores.reduce((a,b)=>a+b,0)/cnt:0;
+  const sd=cnt?Math.sqrt(scores.reduce((a,b)=>a+(b-mean)**2,0)/cnt):0;
+  const srt=[...scores].sort((a,b)=>a-b);
+  const median=cnt?(cnt%2?srt[(cnt-1)/2]:(srt[cnt/2-1]+srt[cnt/2])/2):0;
+  const r2=v=>Math.round(v*100)/100;
+  const stat=(label,val)=>[label,'',r2(val),n,r2(100*val/n)+'%'];
+  const statsAt=rows.length+2;                       // 1-based row of the heading
+  rows.push([], ['Class Statistics'], ['Students marked','',cnt]);
+  rows.push(stat('Mean score',mean));
+  rows.push(['Standard deviation','',r2(sd),'',r2(100*sd/n)+'%']);
+  rows.push(stat('Median',median));
+  rows.push(stat('Lowest',cnt?srt[0]:0));
+  rows.push(stat('Highest',cnt?srt[cnt-1]:0));
   // per-question analysis
   const qa=[['Question','Correct Answer','# Correct','# Wrong','% Correct','Most Common Wrong Answer']];
   for(let q=0;q<n;q++){
@@ -767,19 +897,53 @@ $('#exportBtn').onclick=()=>{
   }
   const fname=`results_${new Date().toISOString().slice(0,10)}`;
   try{
+    /* ExcelJS rather than SheetJS here: SheetJS can't embed pictures, and the
+       point of this column is to show the handwriting exactly as it appears on
+       the paper. Falls back to SheetJS, then CSV, if the library didn't load. */
+    if(typeof ExcelJS==='undefined') throw new Error('no ExcelJS');
+    const IMG_H=30, IMG_MAX_W=240;
+    const wb=new ExcelJS.Workbook();
+    const ws=wb.addWorksheet('Results');
+    rows.forEach(r=>ws.addRow(r));
+    ws.getRow(1).font={bold:true};
+    ws.getRow(statsAt).font={bold:true};
+    let imgCol=16;
+    state.sheets.forEach((sh,i)=>{
+      const rowNo=i+2;
+      if(!sh.nameCrop) return;
+      const w=Math.min(IMG_MAX_W,Math.round(IMG_H*(sh.nameCropAR||4)));
+      const id=wb.addImage({base64:sh.nameCrop.split(',').pop(), extension:'jpeg'});
+      ws.addImage(id,{tl:{col:1.1,row:rowNo-1+0.12}, ext:{width:w,height:IMG_H}});
+      ws.getRow(rowNo).height=Math.max(24,IMG_H*0.78);   // px -> points
+      imgCol=Math.max(imgCol,Math.round(w/7)+3);
+    });
+    [24,imgCol,10,8,12].forEach((v,i)=>ws.getColumn(i+1).width=v);
+    const ws2=wb.addWorksheet('Question Analysis');
+    qa.forEach(r=>ws2.addRow(r));
+    ws2.getRow(1).font={bold:true};
+    [10,15,11,10,11,26].forEach((v,i)=>ws2.getColumn(i+1).width=v);
+    const buf=await wb.xlsx.writeBuffer();
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+    a.download=fname+'.xlsx'; a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+  }catch(e){
+   console.warn('Excel export with pictures failed, falling back:',e);
+   try{  // no ExcelJS: same data, minus the pictures
     const wb=XLSX.utils.book_new();
     const ws1=XLSX.utils.aoa_to_sheet(rows);
-    ws1['!cols']=[{wch:24},{wch:8},{wch:8},{wch:11},{wch:24},{wch:60}];
+    ws1['!cols']=[{wch:24},{wch:16},{wch:10},{wch:8},{wch:12}];
     XLSX.utils.book_append_sheet(wb,ws1,'Results');
     const ws2=XLSX.utils.aoa_to_sheet(qa);
     ws2['!cols']=[{wch:9},{wch:14},{wch:10},{wch:9},{wch:10},{wch:24}];
     XLSX.utils.book_append_sheet(wb,ws2,'Question Analysis');
     XLSX.writeFile(wb,fname+'.xlsx');
-  }catch(e){ // offline fallback: CSV
+   }catch(e2){ console.warn('Plain Excel export failed too, writing CSV:',e2);
     const csv=rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
     const a=document.createElement('a');
     a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
     a.download=fname+'.csv'; a.click();
+   }
   }
 };
 /* ================= self-test (synthetic sheets, run from console: selfTest()) ================ */
