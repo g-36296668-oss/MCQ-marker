@@ -92,6 +92,11 @@
       <div class="field" style="flex:1;min-width:260px"><label>Type your answers in order (e.g. ABCDA BCDAB …) or click them below — the number of questions follows what you enter</label>
         <input type="text" id="keyText" placeholder="ABCDA BCDAB ..."></div>
     </div>
+    <div class="row" style="margin-top:10px;align-items:center">
+      <button id="keySheetBtn" class="secondary" style="font-size:13px">📄 Scan key from a filled sheet</button>
+      <span class="hint" style="margin:0">Or fill a blank sheet with the correct answers and upload it — the key is read straight off the sheet, so numbering can never be mixed up.</span>
+    </div>
+    <input type="file" id="keySheetInput" accept="image/*" style="display:none">
     <div id="keyGrid"></div>
     <div class="hint" id="keyStatus"></div>
     <div class="hint" id="keyWarn" style="color:#b4530a"></div>
@@ -147,22 +152,27 @@
    that are already printed. Adding height above the top squares shifts the
    whole fiducial rectangle down as one piece and leaves the bubbles exactly
    where they were relative to it — old sheets still grade correctly. */
-const QPR=8, ROWS_PER_BLOCK=5, Q_PER_BLOCK=QPR*ROWS_PER_BLOCK;
-const ROW_PITCH=6.5, BLOCK_GAP=4;
-const COL_W=20, LABEL_W=5, BUB_PITCH=3.9, BUB_R=1.55;
+const COLS=8, ROWS_PER_BLOCK=5, Q_PER_BLOCK=COLS*ROWS_PER_BLOCK; // 8 cols, numbered 5 DOWN each = 40/block
+const ROW_PITCH=7, BLOCK_GAP=4;
+const COL_W=21.5, LABEL_W=5, BUB_PITCH=4.4, BUB_R=1.9;
 const MARK_S=9, MARK_S_SMALL=6.5;   // BL is the small one -> tells us orientation
 const PAGE_PAD=3, QUIET=3.5;        // paper edge -> square, and square -> bubbles
 const ORIGIN=PAGE_PAD+MARK_S+QUIET; // top-left of the answer area
-const NAME_H=13;                    // name band, above the top squares
+const NAME_H=22;                    // name band (above the top squares) — holds the handwriting box
+const NB_TOP=5, NB_H=12, NB_LABEL=22; // name box: top offset, height, and label width (mm)
 const LETTERS=['A','B','C','D'];
 function gridShape(n){
   const blocks=Math.max(1,Math.ceil(n/Q_PER_BLOCK));
   const last=n-(blocks-1)*Q_PER_BLOCK;
-  return {blocks, rows:(blocks-1)*ROWS_PER_BLOCK+Math.max(1,Math.ceil(last/QPR))};
+  // Numbering runs DOWNWARD in groups of 5, so a block fills a whole column of 5
+  // before starting the next column. Its occupied rows is 5 when it holds a full
+  // column, otherwise just however many the (single, partial) column has.
+  const lastRows=Math.min(ROWS_PER_BLOCK,Math.max(1,last));
+  return {blocks, rows:(blocks-1)*ROWS_PER_BLOCK+lastRows};
 }
 function pageSize(n){
   const {blocks,rows}=gridShape(n);
-  const cols=Math.max(1,Math.min(QPR,n));
+  const cols=blocks>1 ? COLS : Math.max(1,Math.min(COLS,Math.ceil(n/ROWS_PER_BLOCK)));
   return {w:(cols-1)*COL_W+LABEL_W+3*BUB_PITCH+BUB_R+2*ORIGIN,
           h:(rows-1)*ROW_PITCH+(blocks-1)*BLOCK_GAP+2*BUB_R+2*ORIGIN+NAME_H};
 }
@@ -173,7 +183,7 @@ function markers(n){                // [TL,TR,BR,BL]
 }
 function bubbleCenter(q,opt){       // 0-based question & option -> mm centre
   const block=Math.floor(q/Q_PER_BLOCK), rem=q-block*Q_PER_BLOCK;
-  const row=Math.floor(rem/QPR), col=rem%QPR;
+  const col=Math.floor(rem/ROWS_PER_BLOCK), row=rem%ROWS_PER_BLOCK; // fill each column top-to-bottom
   return [ORIGIN+col*COL_W+LABEL_W+opt*BUB_PITCH,
           NAME_H+ORIGIN+BUB_R+(block*ROWS_PER_BLOCK+row)*ROW_PITCH+block*BLOCK_GAP];
 }
@@ -251,8 +261,10 @@ $('#keyText').addEventListener('input',e=>{
 function sheetHTML(){
   const n=sheetQ(), p=pageSize(n);
   let items='';
-  items+=`<div style="position:absolute;left:${ORIGIN}mm;top:${NAME_H*0.22}mm;font-size:4.2mm;line-height:6mm;font-weight:700;color:#000">Name:</div>`;
-  items+=`<div style="position:absolute;left:${ORIGIN+19}mm;top:${NAME_H*0.22+5.6}mm;width:${p.w-2*ORIGIN-19}mm;border-bottom:0.4mm solid #000"></div>`;
+  // Name box — a clear bordered field students write their name in by hand; the
+  // app crops this strip from each scan and shows/embeds it beside the score.
+  items+=`<div style="position:absolute;left:${ORIGIN}mm;top:${NB_TOP}mm;width:${p.w-2*ORIGIN}mm;height:${NB_H}mm;border:0.5mm solid #000;border-radius:1.2mm"></div>`;
+  items+=`<div style="position:absolute;left:${ORIGIN+2.5}mm;top:${NB_TOP+NB_H/2-3}mm;font-size:4mm;line-height:6mm;font-weight:700;color:#000">Name:</div>`;
   for(const m of markers(n))
     items+=`<div style="position:absolute;left:${m.cx-m.s/2}mm;top:${m.cy-m.s/2}mm;width:${m.s}mm;height:${m.s}mm;background:#000"></div>`;
   for(let q=0;q<n;q++){
@@ -260,18 +272,35 @@ function sheetHTML(){
     items+=`<div style="position:absolute;left:${x0-LABEL_W}mm;top:${y-1.2}mm;width:${LABEL_W-BUB_R-0.4}mm;text-align:right;font-size:2.2mm;line-height:2.4mm;font-weight:700;color:#000">${q+1}</div>`;
     for(let o=0;o<4;o++){
       const [cx,cy]=bubbleCenter(q,o);
-      items+=`<div style="position:absolute;left:${cx-BUB_R}mm;top:${cy-BUB_R}mm;width:${BUB_R*2}mm;height:${BUB_R*2}mm;border:0.35mm solid #000;border-radius:50%;font-size:1.7mm;line-height:${BUB_R*2-0.7}mm;text-align:center;font-weight:700;color:#000">${LETTERS[o]}</div>`;
+      items+=`<div style="position:absolute;left:${cx-BUB_R}mm;top:${cy-BUB_R}mm;width:${BUB_R*2}mm;height:${BUB_R*2}mm;border:0.35mm solid #000;border-radius:50%;font-size:2mm;line-height:${BUB_R*2-0.7}mm;text-align:center;font-weight:700;color:#000">${LETTERS[o]}</div>`;
     }
   }
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Answer sheet</title>
-    <style>@page{size:${p.w.toFixed(1)}mm ${p.h.toFixed(1)}mm;margin:0}html,body{margin:0;padding:0}
+    <style>@page{size:${p.w.toFixed(1)}mm ${p.h.toFixed(1)}mm;margin:0}
+    *{-webkit-print-color-adjust:exact;print-color-adjust:exact;color-adjust:exact}
+    html,body{margin:0;padding:0}
     body{font-family:Helvetica,Arial,sans-serif;background:#fff;color:#000}</style></head>
     <body><div style="position:relative;width:${p.w.toFixed(1)}mm;height:${p.h.toFixed(1)}mm">${items}</div></body></html>`;
 }
 $('#printBtn').onclick=()=>{
-  const w=window.open('','_blank');
-  w.document.write(sheetHTML()); w.document.close();
-  w.onload=()=>setTimeout(()=>w.print(),300);
+  // Print via a hidden iframe. window.open() popups are blocked by default in
+  // most browsers (and always when the app is opened as a local file://), which
+  // made the old Print button silently do nothing. An iframe is never blocked.
+  const html=sheetHTML();
+  const ifr=document.createElement('iframe');
+  ifr.setAttribute('aria-hidden','true');
+  ifr.style.cssText='position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+  document.body.appendChild(ifr);
+  const go=()=>{
+    try{ ifr.contentWindow.focus(); ifr.contentWindow.print(); }
+    catch(e){ alert('Could not open the print dialog: '+e.message); }
+    setTimeout(()=>ifr.remove(),1500);   // keep it alive until the dialog has taken over
+  };
+  const d=ifr.contentWindow.document;
+  d.open(); d.write(html); d.close();
+  // no external images on the sheet, so a short settle is enough for layout
+  if(d.readyState==='complete') setTimeout(go,250);
+  else ifr.onload=()=>setTimeout(go,250);
 };
 /* ================= image utils ================ */
 function toGray(canvas){
@@ -513,7 +542,7 @@ function cropName(sheet,H,N){
   sheet.nameCrop=null; sheet.nameCanvas=null; sheet.nameCropAR=4;
   // Sample the writing area only: right of the printed "Name:" label and above
   // the printed rule, so neither ends up in the picture.
-  const p=pageSize(N), x0=ORIGIN+18, x1=p.w-ORIGIN, y0=1.0, y1=NAME_H*0.22+5.0;
+  const p=pageSize(N), x0=ORIGIN+NB_LABEL, x1=p.w-ORIGIN-2, y0=NB_TOP+1.5, y1=NB_TOP+NB_H-1.5;
   // Pull the strip through the homography pixel by pixel rather than taking a
   // bounding box around it. A photo is never perfectly square-on, and the
   // bounding box of a tilted strip reaches into the printed rule below it and
@@ -651,6 +680,37 @@ $('#sens').addEventListener('change',e=>{
 });
 $('#drop').onclick=()=>$('#fileInput').click();
 $('#fileInput').onchange=e=>{handleFiles(e.target.files); e.target.value='';};
+$('#keySheetBtn').onclick=()=>$('#keySheetInput').click();
+$('#keySheetInput').onchange=e=>{const f=e.target.files[0]; e.target.value=''; if(f) handleKeySheet(f);};
+// Read the answer key straight off a filled sheet. The key sheet and the student
+// sheets are read with the SAME bubble mapping, so comparing them is always
+// correct no matter which way the numbers run — no hand-typing, no order mix-ups.
+async function handleKeySheet(f){
+  if(f.type==='application/pdf'||/\.pdf$/i.test(f.name)){ alert('Please use a photo or scan (JPG/PNG) of the key sheet, not a PDF.'); return; }
+  setStatus('Reading answer-key sheet…');
+  try{
+    const img=await loadImage(f);
+    const sc=Math.min(1,MAXDIM/Math.max(img.width,img.height));
+    const c=document.createElement('canvas');
+    c.width=Math.round(img.width*sc); c.height=Math.round(img.height*sc);
+    c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+    const sheet={canvas:c,corners:null};
+    analyzeSheet(sheet);
+    setStatus('');
+    if(!sheet.cornersOK){ alert('Could not find the four black corner squares on the key sheet. Use a flatter, well-lit photo with all four corners in frame.'); return; }
+    let arr=(sheet.answers||[]).map(a=>a&&a.choice!=null?a.choice:null);
+    while(arr.length && arr[arr.length-1]==null) arr.pop();   // trailing blanks set the test length
+    if(!arr.length){ alert('No answers were detected on the key sheet. Make sure the bubbles are filled in dark.'); return; }
+    setKey(arr); syncKeyText();
+    const blanks=[]; arr.forEach((v,i)=>{ if(v==null) blanks.push(i+1); });
+    const multi=[]; (sheet.answers||[]).slice(0,arr.length).forEach((a,i)=>{ if(a&&a.flag==='multiple marks') multi.push(i+1); });
+    let warn='';
+    if(blanks.length) warn+='No answer detected for Q'+blanks.join(', Q')+'. ';
+    if(multi.length) warn+='More than one mark on Q'+multi.join(', Q')+'. ';
+    $('#keyWarn').textContent=warn?('⚠ '+warn+'Click the correct letter for those in the grid below.'):'';
+    $('#keyStatus').textContent='✓ Answer key read from the sheet — '+arr.length+' questions. Check it below, then upload the students’ sheets.';
+  }catch(err){ setStatus(''); alert('Could not read the key sheet: '+err.message); }
+}
 ['dragover','dragleave','drop'].forEach(ev=>$('#drop').addEventListener(ev,e=>{
   e.preventDefault();
   $('#drop').classList.toggle('over',ev==='dragover');
